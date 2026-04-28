@@ -7,6 +7,7 @@ import * as Observability from "@opencode-ai/core/observability"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
+import { Automation } from "@/automation/automation"
 import { BackgroundJob } from "@/background/job"
 import { Command } from "@/command"
 import { Config } from "@/config/config"
@@ -77,6 +78,7 @@ import {
 import { EventApi } from "./groups/event"
 import { PtyConnectApi } from "./groups/pty"
 import { eventHandlers } from "./handlers/event"
+import { automationHandlers } from "./handlers/automation"
 import { configHandlers } from "./handlers/config"
 import { controlHandlers } from "./handlers/control"
 import { controlPlaneHandlers } from "./handlers/control-plane"
@@ -144,6 +146,7 @@ const ptyConnectApiRoutes = HttpApiBuilder.layer(PtyConnectApi).pipe(
 )
 const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
   Layer.provide([
+    automationHandlers,
     configHandlers,
     experimentalHandlers,
     fileHandlers,
@@ -276,6 +279,7 @@ export function createRoutes(
       corsVaryFix,
       fenceLayer,
       cors(corsOptions),
+      Automation.defaultLayer,
       MoveSession.defaultLayer,
       HttpServer.layerServices,
     ]),
