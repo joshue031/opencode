@@ -75,20 +75,20 @@ export type Event =
   | EventTuiSessionSelect2
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
-  | EventCommandExecuted
-  | EventProjectUpdated
   | EventSessionStatus
   | EventSessionIdle
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
+  | EventCommandExecuted
+  | EventProjectUpdated
   | EventVcsBranchUpdated
+  | EventWorktreeReady
+  | EventWorktreeFailed
   | EventWorkspaceReady
   | EventWorkspaceFailed
   | EventWorkspaceStatus
-  | EventWorktreeReady
-  | EventWorktreeFailed
   | EventServerConnected
   | EventGlobalDisposed
   | EventServerInstanceDisposed
@@ -145,6 +145,15 @@ export type MoveSessionError = {
   data: {
     message: string
   }
+}
+
+export type LiveAutomationRun = {
+  id: string
+  automationID: string
+  projectID: string
+  directory: string
+  title: string
+  status: "queued" | "preparing" | "running"
 }
 
 export type SnapshotFileDiff = {
@@ -1479,43 +1488,6 @@ export type GlobalEvent = {
       }
     | {
         id: string
-        type: "command.executed"
-        properties: {
-          name: string
-          sessionID: string
-          arguments: string
-          messageID: string
-        }
-      }
-    | {
-        id: string
-        type: "project.updated"
-        properties: {
-          id: string
-          worktree: string
-          vcs?: "git"
-          name?: string
-          icon?: {
-            url?: string
-            override?: string
-            color?: string
-          }
-          commands?: {
-            /**
-             * Startup script to run when creating a new workspace (worktree)
-             */
-            start?: string
-          }
-          time: {
-            created: number
-            updated: number
-            initialized?: number
-          }
-          sandboxes: Array<string>
-        }
-      }
-    | {
-        id: string
         type: "session.status"
         properties: {
           sessionID: string
@@ -1568,9 +1540,61 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "command.executed"
+        properties: {
+          name: string
+          sessionID: string
+          arguments: string
+          messageID: string
+        }
+      }
+    | {
+        id: string
+        type: "project.updated"
+        properties: {
+          id: string
+          worktree: string
+          vcs?: "git"
+          name?: string
+          icon?: {
+            url?: string
+            override?: string
+            color?: string
+          }
+          commands?: {
+            /**
+             * Startup script to run when creating a new workspace (worktree)
+             */
+            start?: string
+          }
+          time: {
+            created: number
+            updated: number
+            initialized?: number
+          }
+          sandboxes: Array<string>
+        }
+      }
+    | {
+        id: string
         type: "vcs.branch.updated"
         properties: {
           branch?: string
+        }
+      }
+    | {
+        id: string
+        type: "worktree.ready"
+        properties: {
+          name: string
+          branch?: string
+        }
+      }
+    | {
+        id: string
+        type: "worktree.failed"
+        properties: {
+          message: string
         }
       }
     | {
@@ -1593,21 +1617,6 @@ export type GlobalEvent = {
         properties: {
           workspaceID: string
           status: "connected" | "connecting" | "disconnected" | "error"
-        }
-      }
-    | {
-        id: string
-        type: "worktree.ready"
-        properties: {
-          name: string
-          branch?: string
-        }
-      }
-    | {
-        id: string
-        type: "worktree.failed"
-        properties: {
-          message: string
         }
       }
     | {
@@ -2045,6 +2054,200 @@ export type Config = {
     mcp_timeout?: number
     policies?: Array<ConfigV2ExperimentalPolicy>
   }
+}
+
+export type Automation = {
+  id: string
+  projectID: string
+  directory: string
+  title: string
+  enabled: boolean
+  kind: "standalone" | "thread"
+  threadID?: string
+  prompt: string
+  schedule:
+    | {
+        type: "interval"
+        everyMinutes: number
+      }
+    | {
+        type: "daily"
+        time: string
+        timezone: string
+      }
+    | {
+        type: "weekly"
+        days: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat">
+        time: string
+        timezone: string
+      }
+  executionMode: "local" | "worktree"
+  model: string
+  reasoningEffort?: "none" | "low" | "medium" | "high"
+  permissionProfile:
+    | "read_only"
+    | "repo_write_no_network"
+    | "repo_write_with_tests"
+    | "repo_write_network_requires_approval"
+  notificationBehavior: "inbox" | "auto_archive_no_findings"
+  maxRuntimeMinutes?: number
+  time: {
+    created: number
+    updated: number
+    lastRun?: number
+    nextRun?: number
+    starts?: number
+    ends?: number
+  }
+}
+
+export type AutomationCreateInput = {
+  title: string
+  enabled?: boolean
+  kind?: "standalone" | "thread"
+  threadID?: string
+  prompt: string
+  schedule:
+    | {
+        type: "interval"
+        everyMinutes: number
+      }
+    | {
+        type: "daily"
+        time: string
+        timezone: string
+      }
+    | {
+        type: "weekly"
+        days: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat">
+        time: string
+        timezone: string
+      }
+  executionMode?: "local" | "worktree"
+  model?: string
+  reasoningEffort?: "none" | "low" | "medium" | "high"
+  permissionProfile?:
+    | "read_only"
+    | "repo_write_no_network"
+    | "repo_write_with_tests"
+    | "repo_write_network_requires_approval"
+  notificationBehavior?: "inbox" | "auto_archive_no_findings"
+  maxRuntimeMinutes?: number
+  startsAt?: number
+  endsAt?: number
+}
+
+export type AutomationRun = {
+  id: string
+  automationID: string
+  projectID: string
+  directory: string
+  sessionID?: string
+  status:
+    | "queued"
+    | "preparing"
+    | "running"
+    | "needs_approval"
+    | "completed_with_findings"
+    | "completed_no_findings"
+    | "failed"
+    | "cancelled"
+  promptSnapshot: string
+  modelSnapshot: string
+  executionModeSnapshot: "local" | "worktree"
+  scheduleSnapshot:
+    | {
+        type: "interval"
+        everyMinutes: number
+      }
+    | {
+        type: "daily"
+        time: string
+        timezone: string
+      }
+    | {
+        type: "weekly"
+        days: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat">
+        time: string
+        timezone: string
+      }
+  worktreePath?: string
+  branchName?: string
+  summary?: string
+  result?: "findings" | "no_findings" | "needs_approval" | "failed"
+  findingsCount: number
+  diffStats?: {
+    additions: number
+    deletions: number
+    files: number
+  }
+  error?: string
+  time: {
+    created: number
+    updated: number
+    queued: number
+    started?: number
+    completed?: number
+    read?: number
+    archived?: number
+  }
+}
+
+export type NotFoundError = {
+  name: "NotFoundError"
+  data: {
+    message: string
+  }
+}
+
+export type AutomationFinding = {
+  id: string
+  runID: string
+  title: string
+  severity: "low" | "medium" | "high"
+  details: string
+  filesChanged: Array<string>
+  recommendedNextAction?: string
+  time: {
+    created: number
+    updated: number
+  }
+}
+
+export type AutomationUpdateInput = {
+  title?: string
+  enabled?: boolean
+  kind?: "standalone" | "thread"
+  threadID?: string
+  prompt?: string
+  schedule?:
+    | {
+        type: "interval"
+        everyMinutes: number
+      }
+    | {
+        type: "daily"
+        time: string
+        timezone: string
+      }
+    | {
+        type: "weekly"
+        days: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat">
+        time: string
+        timezone: string
+      }
+  executionMode?: "local" | "worktree"
+  model?: string
+  reasoningEffort?: "none" | "low" | "medium" | "high"
+  permissionProfile?:
+    | "read_only"
+    | "repo_write_no_network"
+    | "repo_write_with_tests"
+    | "repo_write_network_requires_approval"
+  notificationBehavior?: "inbox" | "auto_archive_no_findings"
+  maxRuntimeMinutes?: number
+  startsAt?: number
+  endsAt?: number
 }
 
 export type Model = {
@@ -2568,13 +2771,6 @@ export type ProviderAuthError1 = {
     field?: string
     message?: string
     kind?: string
-  }
-}
-
-export type NotFoundError = {
-  name: "NotFoundError"
-  data: {
-    message: string
   }
 }
 
@@ -4982,45 +5178,6 @@ export type EventMcpBrowserOpenFailed = {
   }
 }
 
-export type EventCommandExecuted = {
-  id: string
-  type: "command.executed"
-  properties: {
-    name: string
-    sessionID: string
-    arguments: string
-    messageID: string
-  }
-}
-
-export type EventProjectUpdated = {
-  id: string
-  type: "project.updated"
-  properties: {
-    id: string
-    worktree: string
-    vcs?: "git"
-    name?: string
-    icon?: {
-      url?: string
-      override?: string
-      color?: string
-    }
-    commands?: {
-      /**
-       * Startup script to run when creating a new workspace (worktree)
-       */
-      start?: string
-    }
-    time: {
-      created: number
-      updated: number
-      initialized?: number
-    }
-    sandboxes: Array<string>
-  }
-}
-
 export type EventSessionStatus = {
   id: string
   type: "session.status"
@@ -5079,11 +5236,67 @@ export type EventSessionCompacted = {
   }
 }
 
+export type EventCommandExecuted = {
+  id: string
+  type: "command.executed"
+  properties: {
+    name: string
+    sessionID: string
+    arguments: string
+    messageID: string
+  }
+}
+
+export type EventProjectUpdated = {
+  id: string
+  type: "project.updated"
+  properties: {
+    id: string
+    worktree: string
+    vcs?: "git"
+    name?: string
+    icon?: {
+      url?: string
+      override?: string
+      color?: string
+    }
+    commands?: {
+      /**
+       * Startup script to run when creating a new workspace (worktree)
+       */
+      start?: string
+    }
+    time: {
+      created: number
+      updated: number
+      initialized?: number
+    }
+    sandboxes: Array<string>
+  }
+}
+
 export type EventVcsBranchUpdated = {
   id: string
   type: "vcs.branch.updated"
   properties: {
     branch?: string
+  }
+}
+
+export type EventWorktreeReady = {
+  id: string
+  type: "worktree.ready"
+  properties: {
+    name: string
+    branch?: string
+  }
+}
+
+export type EventWorktreeFailed = {
+  id: string
+  type: "worktree.failed"
+  properties: {
+    message: string
   }
 }
 
@@ -5109,23 +5322,6 @@ export type EventWorkspaceStatus = {
   properties: {
     workspaceID: string
     status: "connected" | "connecting" | "disconnected" | "error"
-  }
-}
-
-export type EventWorktreeReady = {
-  id: string
-  type: "worktree.ready"
-  properties: {
-    name: string
-    branch?: string
-  }
-}
-
-export type EventWorktreeFailed = {
-  id: string
-  type: "worktree.failed"
-  properties: {
-    message: string
   }
 }
 
@@ -5310,6 +5506,34 @@ export type GlobalHealthResponses = {
 
 export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthResponses]
 
+export type GlobalAutomationRunningData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/automation/running"
+}
+
+export type GlobalAutomationRunningErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GlobalAutomationRunningError = GlobalAutomationRunningErrors[keyof GlobalAutomationRunningErrors]
+
+export type GlobalAutomationRunningResponses = {
+  /**
+   * Running automation runs
+   */
+  200: {
+    count: number
+    runs: Array<LiveAutomationRun>
+  }
+}
+
+export type GlobalAutomationRunningResponse = GlobalAutomationRunningResponses[keyof GlobalAutomationRunningResponses]
+
 export type GlobalEventData = {
   body?: never
   path?: never
@@ -5463,6 +5687,472 @@ export type EventSubscribeResponses = {
 }
 
 export type EventSubscribeResponse = EventSubscribeResponses[keyof EventSubscribeResponses]
+
+export type AutomationListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation"
+}
+
+export type AutomationListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AutomationListError = AutomationListErrors[keyof AutomationListErrors]
+
+export type AutomationListResponses = {
+  /**
+   * List of automations
+   */
+  200: Array<Automation>
+}
+
+export type AutomationListResponse = AutomationListResponses[keyof AutomationListResponses]
+
+export type AutomationCreateData = {
+  body?: AutomationCreateInput
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation"
+}
+
+export type AutomationCreateErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type AutomationCreateError = AutomationCreateErrors[keyof AutomationCreateErrors]
+
+export type AutomationCreateResponses = {
+  /**
+   * Created automation
+   */
+  200: Automation
+}
+
+export type AutomationCreateResponse = AutomationCreateResponses[keyof AutomationCreateResponses]
+
+export type AutomationRunsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+    automationID?: string
+    inbox?: "true" | "false"
+    archived?: "true" | "false"
+    limit?: string
+  }
+  url: "/automation/runs"
+}
+
+export type AutomationRunsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AutomationRunsError = AutomationRunsErrors[keyof AutomationRunsErrors]
+
+export type AutomationRunsResponses = {
+  /**
+   * List of automation runs
+   */
+  200: Array<AutomationRun>
+}
+
+export type AutomationRunsResponse = AutomationRunsResponses[keyof AutomationRunsResponses]
+
+export type AutomationRunGetData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/runs/{runID}"
+}
+
+export type AutomationRunGetErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunGetError = AutomationRunGetErrors[keyof AutomationRunGetErrors]
+
+export type AutomationRunGetResponses = {
+  /**
+   * Automation run
+   */
+  200: AutomationRun
+}
+
+export type AutomationRunGetResponse = AutomationRunGetResponses[keyof AutomationRunGetResponses]
+
+export type AutomationRunFindingsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/runs/{runID}/findings"
+}
+
+export type AutomationRunFindingsErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunFindingsError = AutomationRunFindingsErrors[keyof AutomationRunFindingsErrors]
+
+export type AutomationRunFindingsResponses = {
+  /**
+   * Automation findings
+   */
+  200: Array<AutomationFinding>
+}
+
+export type AutomationRunFindingsResponse = AutomationRunFindingsResponses[keyof AutomationRunFindingsResponses]
+
+export type AutomationRunDiffData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/runs/{runID}/diff"
+}
+
+export type AutomationRunDiffErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunDiffError = AutomationRunDiffErrors[keyof AutomationRunDiffErrors]
+
+export type AutomationRunDiffResponses = {
+  /**
+   * Automation run diff
+   */
+  200: Array<SnapshotFileDiff>
+}
+
+export type AutomationRunDiffResponse = AutomationRunDiffResponses[keyof AutomationRunDiffResponses]
+
+export type AutomationRunReadData = {
+  body?: {
+    read?: boolean
+  }
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/runs/{runID}/read"
+}
+
+export type AutomationRunReadErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunReadError = AutomationRunReadErrors[keyof AutomationRunReadErrors]
+
+export type AutomationRunReadResponses = {
+  /**
+   * Automation run
+   */
+  200: AutomationRun
+}
+
+export type AutomationRunReadResponse = AutomationRunReadResponses[keyof AutomationRunReadResponses]
+
+export type AutomationRunArchiveData = {
+  body?: {
+    archived?: boolean
+  }
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/runs/{runID}/archive"
+}
+
+export type AutomationRunArchiveErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunArchiveError = AutomationRunArchiveErrors[keyof AutomationRunArchiveErrors]
+
+export type AutomationRunArchiveResponses = {
+  /**
+   * Automation run
+   */
+  200: AutomationRun
+}
+
+export type AutomationRunArchiveResponse = AutomationRunArchiveResponses[keyof AutomationRunArchiveResponses]
+
+export type AutomationRunCancelData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/runs/{runID}/cancel"
+}
+
+export type AutomationRunCancelErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunCancelError = AutomationRunCancelErrors[keyof AutomationRunCancelErrors]
+
+export type AutomationRunCancelResponses = {
+  /**
+   * Automation run
+   */
+  200: AutomationRun
+}
+
+export type AutomationRunCancelResponse = AutomationRunCancelResponses[keyof AutomationRunCancelResponses]
+
+export type AutomationDeleteData = {
+  body?: never
+  path: {
+    automationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/{automationID}"
+}
+
+export type AutomationDeleteErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationDeleteError = AutomationDeleteErrors[keyof AutomationDeleteErrors]
+
+export type AutomationDeleteResponses = {
+  /**
+   * Deleted
+   */
+  200: boolean
+}
+
+export type AutomationDeleteResponse = AutomationDeleteResponses[keyof AutomationDeleteResponses]
+
+export type AutomationGetData = {
+  body?: never
+  path: {
+    automationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/{automationID}"
+}
+
+export type AutomationGetErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationGetError = AutomationGetErrors[keyof AutomationGetErrors]
+
+export type AutomationGetResponses = {
+  /**
+   * Automation
+   */
+  200: Automation
+}
+
+export type AutomationGetResponse = AutomationGetResponses[keyof AutomationGetResponses]
+
+export type AutomationUpdateData = {
+  body?: AutomationUpdateInput
+  path: {
+    automationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/{automationID}"
+}
+
+export type AutomationUpdateErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationUpdateError = AutomationUpdateErrors[keyof AutomationUpdateErrors]
+
+export type AutomationUpdateResponses = {
+  /**
+   * Updated automation
+   */
+  200: Automation
+}
+
+export type AutomationUpdateResponse = AutomationUpdateResponses[keyof AutomationUpdateResponses]
+
+export type AutomationDuplicateData = {
+  body?: never
+  path: {
+    automationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/{automationID}/duplicate"
+}
+
+export type AutomationDuplicateErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationDuplicateError = AutomationDuplicateErrors[keyof AutomationDuplicateErrors]
+
+export type AutomationDuplicateResponses = {
+  /**
+   * Duplicated automation
+   */
+  200: Automation
+}
+
+export type AutomationDuplicateResponse = AutomationDuplicateResponses[keyof AutomationDuplicateResponses]
+
+export type AutomationRunNowData = {
+  body?: never
+  path: {
+    automationID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/automation/{automationID}/run"
+}
+
+export type AutomationRunNowErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type AutomationRunNowError = AutomationRunNowErrors[keyof AutomationRunNowErrors]
+
+export type AutomationRunNowResponses = {
+  /**
+   * Queued automation run
+   */
+  200: AutomationRun
+}
+
+export type AutomationRunNowResponse = AutomationRunNowResponses[keyof AutomationRunNowResponses]
 
 export type ConfigGetData = {
   body?: never

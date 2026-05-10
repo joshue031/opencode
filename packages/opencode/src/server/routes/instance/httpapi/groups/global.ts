@@ -1,5 +1,5 @@
 import { AutomationID, AutomationRunID } from "@/automation/schema"
-import { ProjectID } from "@/project/schema"
+import { ProjectV2 } from "@opencode-ai/core/project"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { EventV2 } from "@opencode-ai/core/event"
 import { InstanceDisposed } from "@/server/event"
@@ -68,14 +68,14 @@ const GlobalUpgradeResult = Schema.Union([
 const LiveAutomationRun = Schema.Struct({
   id: AutomationRunID,
   automationID: AutomationID,
-  projectID: ProjectID,
+  projectID: ProjectV2.ID,
   directory: Schema.String,
   title: Schema.String,
   status: Schema.Literals(["queued", "preparing", "running"]),
 }).annotate({ identifier: "LiveAutomationRun" })
 
 const GlobalAutomationRunning = Schema.Struct({
-  count: Schema.Number,
+  count: Schema.Finite,
   runs: Schema.Array(LiveAutomationRun),
 })
 

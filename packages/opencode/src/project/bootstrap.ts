@@ -51,18 +51,20 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer: Layer.Layer<Service> = layer.pipe(
-  Layer.provide([
-    Automation.defaultLayer,
-    Config.defaultLayer,
-    Format.defaultLayer,
-    LSP.defaultLayer,
-    Plugin.defaultLayer,
-    Project.defaultLayer,
-    ShareNext.defaultLayer,
-    Snapshot.defaultLayer,
-    Vcs.defaultLayer,
-  ]),
+export const defaultLayer: Layer.Layer<Service> = Layer.suspend(() =>
+  layer.pipe(
+    Layer.provide([
+      Automation.defaultLayer,
+      Config.defaultLayer,
+      Format.defaultLayer,
+      LSP.defaultLayer,
+      Plugin.defaultLayer,
+      Project.defaultLayer,
+      ShareNext.defaultLayer,
+      Snapshot.defaultLayer,
+      Vcs.defaultLayer,
+    ]),
+  ),
 )
 
 export const node = LayerNode.make(layer, [
