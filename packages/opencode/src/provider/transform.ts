@@ -803,13 +803,11 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
         return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
       }
       const copilotEfforts = iife(() => {
-        const base =
-          id.includes("5.1-codex-max") || id.includes("5.2") || id.includes("5.3")
-            ? [...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
-            : [...WIDELY_SUPPORTED_EFFORTS]
-        if (model.providerID.startsWith("opencode") && id.includes("gpt-5")) base.unshift("none")
-        if (id.includes("gpt-5") && model.release_date >= "2025-12-04") base.push("xhigh")
-        return base
+        if (id.includes("5.1-codex-max") || id.includes("5.2") || id.includes("5.3"))
+          return [...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
+        const arr = [...WIDELY_SUPPORTED_EFFORTS]
+        if (id.includes("gpt-5") && model.release_date >= "2025-12-04") arr.push("xhigh")
+        return arr
       })
       return Object.fromEntries(
         copilotEfforts.map((effort) => [
@@ -837,9 +835,6 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
         return Object.fromEntries(["none", "high"].map((effort) => [effort, { reasoningEffort: effort }]))
       }
       const efforts = [...WIDELY_SUPPORTED_EFFORTS]
-      if (model.providerID.startsWith("opencode") && id.includes("gpt-5")) {
-        efforts.unshift("none")
-      }
       if (model.api.id.toLowerCase().includes("deepseek-v4")) {
         efforts.push("max")
       }
@@ -861,10 +856,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     case "@ai-sdk/amazon-bedrock/mantle":
     case "@ai-sdk/openai": {
       // https://v5.ai-sdk.dev/providers/ai-sdk-providers/openai
-      const efforts =
-        model.providerID.startsWith("opencode") && id.includes("gpt-5")
-          ? unique(["none", ...openaiReasoningEfforts(model.api.id, model.release_date)])
-          : openaiReasoningEfforts(model.api.id, model.release_date)
+      const efforts = openaiReasoningEfforts(model.api.id, model.release_date)
       return Object.fromEntries(
         efforts.map((effort) => [
           effort,
