@@ -1007,6 +1007,17 @@ export default function Layout(props: ParentProps) {
         onSelect: () => chooseProject(),
       },
       {
+        id: "automation.open",
+        title: "Automations",
+        category: language.t("command.category.project"),
+        disabled: !currentProject() && !currentDir(),
+        onSelect: () => {
+          const directory = currentProject()?.worktree ?? currentDir()
+          if (!directory) return
+          navigateWithSidebarReset(`/${base64Encode(directory)}/automations`)
+        },
+      },
+      {
         id: "project.previous",
         title: language.t("command.project.previous"),
         category: language.t("command.category.project"),
@@ -2009,6 +2020,9 @@ export default function Layout(props: ParentProps) {
       setState("hoverProject", hoverOpen ? worktree : undefined)
     },
     navigateToProject,
+    navigateToProjectAutomations: (directory) => {
+      navigateWithSidebarReset(`/${base64Encode(directory)}/automations`)
+    },
     openSidebar: () => layout.sidebar.open(),
     closeProject,
     showEditProjectDialog: (proj) => showEditProjectDialog(server.current!, proj),
@@ -2168,6 +2182,13 @@ export default function Layout(props: ParentProps) {
                           }}
                         >
                           <DropdownMenu.ItemLabel>{language.t("common.edit")}</DropdownMenu.ItemLabel>
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          data-action="project-automations"
+                          data-project={slug()}
+                          onSelect={openAutomations}
+                        >
+                          <DropdownMenu.ItemLabel>Automations</DropdownMenu.ItemLabel>
                         </DropdownMenu.Item>
                         <DropdownMenu.Item
                           data-action="project-workspaces-toggle"
