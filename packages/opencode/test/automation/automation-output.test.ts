@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { SessionV1 } from "@opencode-ai/core/v1/session"
 import { AutomationTesting } from "../../src/automation/automation"
-import type { MessageV2 } from "../../src/session/message-v2"
 
 const reportJson = JSON.stringify({
   result: "findings",
@@ -19,7 +19,7 @@ const message = (text: string) =>
   ({
     info: { role: "assistant" },
     parts: [{ type: "text", text }],
-  }) as MessageV2.WithParts
+  }) as SessionV1.WithParts
 
 describe("automation output", () => {
   test("parses structured report JSON from fenced Markdown", () => {

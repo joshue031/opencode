@@ -2,13 +2,14 @@ import z from "zod"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Database } from "@opencode-ai/core/database/database"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { ProjectV2 } from "@opencode-ai/core/project"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm"
 import { InstanceRef } from "@/effect/instance-ref"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
-import { Permission } from "@/permission"
 import { Provider } from "@/provider/provider"
 import { Session } from "@/session/session"
 import { MessageV2 } from "@/session/message-v2"
@@ -210,6 +211,13 @@ export const NotFoundError = NamedError.create("AutomationNotFoundError", {
 
 function logAutomationError(message: string, error: unknown, annotations: Record<string, string> = {}) {
   return Effect.logError(message, error).pipe(Effect.annotateLogs({ service: "automation", ...annotations }))
+}
+
+function withDb<A, E, R>(effect: (db: Database.Interface["db"]) => Effect.Effect<A, E, R>) {
+  return Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    return yield* effect(db).pipe(Effect.orDie)
+  })
 }
 
 type AutomationRow = typeof AutomationTable.$inferSelect
@@ -423,8 +431,8 @@ const AutomationOutput = z.object({
 
 type AutomationOutput = z.infer<typeof AutomationOutput>
 
-function rules(profile: PermissionProfile): Permission.Ruleset {
-  const readOnly: Permission.Ruleset = [
+function rules(profile: PermissionProfile): PermissionV1.Ruleset {
+  const readOnly: PermissionV1.Ruleset = [
     { permission: "read", pattern: "*", action: "allow" },
     { permission: "grep", pattern: "*", action: "allow" },
     { permission: "glob", pattern: "*", action: "allow" },
@@ -437,7 +445,7 @@ function rules(profile: PermissionProfile): Permission.Ruleset {
     { permission: "question", pattern: "*", action: "deny" },
   ]
   if (profile === "read_only") return readOnly
-  const write: Permission.Ruleset = [
+  const write: PermissionV1.Ruleset = [
     { permission: "read", pattern: "*", action: "allow" },
     { permission: "grep", pattern: "*", action: "allow" },
     { permission: "glob", pattern: "*", action: "allow" },
@@ -494,9 +502,9 @@ function buildPrompt(automation: Info, project: { directory: string; worktree: s
   ].join("\n")
 }
 
-function messageText(message: MessageV2.WithParts) {
+function messageText(message: SessionV1.WithParts) {
   return message.parts
-    .filter((part): part is MessageV2.TextPart => part.type === "text")
+    .filter((part): part is SessionV1.TextPart => part.type === "text")
     .map((part) => part.text)
     .join("\n")
     .trim()
@@ -559,7 +567,7 @@ function parseTextOutput(text: string): AutomationOutput | undefined {
   }
 }
 
-function fallbackOutput(message: MessageV2.WithParts): AutomationOutput {
+function fallbackOutput(message: SessionV1.WithParts): AutomationOutput {
   const raw = messageText(message)
   const parsed = parseTextOutput(raw)
   if (parsed) return parsed
@@ -580,7 +588,7 @@ function fallbackOutput(message: MessageV2.WithParts): AutomationOutput {
   })
 }
 
-function assistantErrorSummary(error: NonNullable<MessageV2.Assistant["error"]>) {
+function assistantErrorSummary(error: NonNullable<SessionV1.Assistant["error"]>) {
   const data = typeof error.data === "object" && error.data !== null ? error.data : undefined
   if (data && "message" in data && typeof data.message === "string") return data.message
   return error.name
@@ -591,38 +599,38 @@ function defined<T extends object>(input: T) {
 }
 
 function patchRun(runID: AutomationRunID, patch: Partial<typeof AutomationRunTable.$inferInsert>) {
-  return Effect.sync(() =>
-    Database.use((db) =>
-      db
-        .update(AutomationRunTable)
-        .set({ ...defined(patch), time_updated: Date.now() })
-        .where(eq(AutomationRunTable.id, runID))
-        .run(),
-    ),
+  return withDb((db) =>
+    db
+      .update(AutomationRunTable)
+      .set({ ...defined(patch), time_updated: Date.now() })
+      .where(eq(AutomationRunTable.id, runID))
+      .run(),
   )
 }
 
 function insertFindings(runID: AutomationRunID, findings: AutomationOutput["findings"]) {
-  return Effect.sync(() =>
-    Database.transaction((db) => {
-      db.delete(AutomationFindingTable).where(eq(AutomationFindingTable.run_id, runID)).run()
-      for (const finding of findings) {
-        const id = AutomationFindingID.ascending()
-        db.insert(AutomationFindingTable)
-          .values({
-            id,
-            run_id: runID,
-            title: finding.title,
-            severity: finding.severity,
-            details: finding.details,
-            files_changed: finding.filesChanged,
-            recommended_next_action: finding.recommendedNextAction,
-            time_created: Date.now(),
-            time_updated: Date.now(),
-          })
-          .run()
-      }
-    }),
+  return withDb((db) =>
+    db.transaction((tx) =>
+      Effect.gen(function* () {
+        yield* tx.delete(AutomationFindingTable).where(eq(AutomationFindingTable.run_id, runID)).run()
+        yield* Effect.forEach(findings, (finding) =>
+          tx
+            .insert(AutomationFindingTable)
+            .values({
+              id: AutomationFindingID.ascending(),
+              run_id: runID,
+              title: finding.title,
+              severity: finding.severity,
+              details: finding.details,
+              files_changed: finding.filesChanged,
+              recommended_next_action: finding.recommendedNextAction,
+              time_created: Date.now(),
+              time_updated: Date.now(),
+            })
+            .run(),
+        )
+      }),
+    ),
   )
 }
 
@@ -655,7 +663,7 @@ function runPromptEffect(automation: Info, runID: AutomationRunID) {
     if (automation.kind === "thread") {
       yield* sessions.setPermission({ sessionID: session.id, permission: rules(automation.permissionProfile) })
       if (automation.threadID !== session.id) {
-        Database.use((db) =>
+        yield* withDb((db) =>
           db
             .update(AutomationTable)
             .set({ thread_id: session.id, time_updated: Date.now() })
@@ -755,12 +763,15 @@ const missedGraceMs = 60 * 60_000
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const database = yield* Database.Service
     const prompt = yield* SessionPrompt.Service
     const sessions = yield* Session.Service
     const sessionStatus = yield* SessionStatus.Service
     const sessionSummary = yield* SessionSummary.Service
     const worktree = yield* Worktree.Service
     const provider = yield* Provider.Service
+    const provideDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.provideService(Database.Service, database))
 
     const scheduler = yield* InstanceState.make<SchedulerState>(
       Effect.fn("Automation.schedulerState")(function* () {
@@ -782,7 +793,7 @@ export const layer = Layer.effect(
 
     const selectAutomation = Effect.fn("Automation.select")(function* (id: AutomationID) {
       const current = yield* scope
-      const row = Database.use((db) =>
+      const row = yield* withDb((db) =>
         db
           .select()
           .from(AutomationTable)
@@ -801,7 +812,7 @@ export const layer = Layer.effect(
 
     const getRun = Effect.fn("Automation.getRun")(function* (id: AutomationRunID) {
       const current = yield* scope
-      const row = Database.use((db) =>
+      const row = yield* withDb((db) =>
         db
           .select()
           .from(AutomationRunTable)
@@ -820,7 +831,7 @@ export const layer = Layer.effect(
 
     const list = Effect.fn("Automation.list")(function* () {
       const current = yield* scope
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationTable)
@@ -849,7 +860,7 @@ export const layer = Layer.effect(
         ? computeNextRun({ schedule, after: now, startsAt: input.startsAt, endsAt: input.endsAt })
         : undefined
       const id = AutomationID.ascending()
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .insert(AutomationTable)
           .values({
@@ -897,7 +908,7 @@ export const layer = Layer.effect(
           ? computeNextRun({ schedule, after: Date.now(), startsAt, endsAt })
           : undefined
         : current.time.nextRun
-      const row = Database.use((db) =>
+      const row = yield* withDb((db) =>
         db
           .update(AutomationTable)
           .set(
@@ -930,7 +941,7 @@ export const layer = Layer.effect(
 
     const remove = Effect.fn("Automation.remove")(function* (id: AutomationID) {
       yield* selectAutomation(id)
-      Database.use((db) => db.delete(AutomationTable).where(eq(AutomationTable.id, id)).run())
+      yield* withDb((db) => db.delete(AutomationTable).where(eq(AutomationTable.id, id)).run())
       return true
     })
 
@@ -973,7 +984,7 @@ export const layer = Layer.effect(
       }
       if (input?.archived === true) conditions.push(sql`${AutomationRunTable.time_archived} is not null`)
       if (input?.archived === false) conditions.push(sql`${AutomationRunTable.time_archived} is null`)
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationRunTable)
@@ -987,7 +998,7 @@ export const layer = Layer.effect(
 
     const listFindings = Effect.fn("Automation.listFindings")(function* (runID: AutomationRunID) {
       yield* getRun(runID)
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationFindingTable)
@@ -1057,7 +1068,7 @@ export const layer = Layer.effect(
         time_read: archiveNoFindings ? now : undefined,
         time_archived: archiveNoFindings ? now : undefined,
       })
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .update(AutomationTable)
           .set({ last_run_at: now, next_run_at: nextRunAt ?? null, time_updated: now })
@@ -1086,7 +1097,7 @@ export const layer = Layer.effect(
         error: message,
         time_completed: now,
       })
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .update(AutomationTable)
           .set({ last_run_at: now, next_run_at: nextRunAt ?? null, time_updated: now })
@@ -1119,7 +1130,7 @@ export const layer = Layer.effect(
         error: restartInterruptedMessage,
         time_completed: now,
       })
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .update(AutomationTable)
           .set({ last_run_at: now, next_run_at: nextRunAt ?? null, time_updated: now })
@@ -1156,7 +1167,7 @@ export const layer = Layer.effect(
                 metadata,
                 time: { start, end: now },
               },
-            } satisfies MessageV2.ToolPart)
+            } satisfies SessionV1.ToolPart)
           }
 
           if ((part.type === "text" || part.type === "reasoning") && part.time && !part.time.end) {
@@ -1180,7 +1191,7 @@ export const layer = Layer.effect(
             ...message.info.time,
             completed: message.info.time.completed ?? now,
           },
-        } satisfies MessageV2.Assistant)
+        } satisfies SessionV1.Assistant)
       }
       yield* sessionStatus.set(sessionID, { type: "idle" })
     })
@@ -1258,7 +1269,7 @@ export const layer = Layer.effect(
         startsAt: automation.time.starts,
         endsAt: automation.time.ends,
       })
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .update(AutomationTable)
           .set({ next_run_at: nextRunAt ?? null, time_updated: Date.now() })
@@ -1269,7 +1280,7 @@ export const layer = Layer.effect(
 
     const enqueue = Effect.fn("Automation.enqueue")(function* (automation: Info) {
       const state = yield* InstanceState.get(scheduler)
-      const active = Database.use((db) =>
+      const active = yield* withDb((db) =>
         db
           .select()
           .from(AutomationRunTable)
@@ -1296,7 +1307,7 @@ export const layer = Layer.effect(
       }
       const now = Date.now()
       const id = AutomationRunID.ascending()
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .insert(AutomationRunTable)
           .values({
@@ -1327,7 +1338,7 @@ export const layer = Layer.effect(
     const repair = Effect.fn("Automation.repair")(function* () {
       const current = yield* scope
       const now = Date.now()
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationTable)
@@ -1349,7 +1360,7 @@ export const layer = Layer.effect(
           startsAt: automation.time.starts,
           endsAt: automation.time.ends,
         })
-        Database.use((db) =>
+        yield* withDb((db) =>
           db
             .update(AutomationTable)
             .set({ next_run_at: nextRunAt ?? null, time_updated: now })
@@ -1361,7 +1372,7 @@ export const layer = Layer.effect(
 
     const failInterruptedRuns = Effect.fn("Automation.failInterruptedRuns")(function* () {
       const current = yield* scope
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationRunTable)
@@ -1384,7 +1395,7 @@ export const layer = Layer.effect(
 
     const repairInterruptedRunSessions = Effect.fn("Automation.repairInterruptedRunSessions")(function* () {
       const current = yield* scope
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationRunTable)
@@ -1409,7 +1420,7 @@ export const layer = Layer.effect(
     const tick = Effect.fn("Automation.tick")(function* () {
       const current = yield* scope
       const now = Date.now()
-      const rows = Database.use((db) =>
+      const rows = yield* withDb((db) =>
         db
           .select()
           .from(AutomationTable)
@@ -1432,7 +1443,7 @@ export const layer = Layer.effect(
             startsAt: automation.time.starts,
             endsAt: automation.time.ends,
           })
-          Database.use((db) =>
+          yield* withDb((db) =>
             db
               .update(AutomationTable)
               .set({ next_run_at: nextRunAt ?? null, time_updated: now })
@@ -1493,7 +1504,7 @@ export const layer = Layer.effect(
             endsAt: automation.time.ends,
           })
         : undefined
-      Database.use((db) =>
+      yield* withDb((db) =>
         db
           .update(AutomationTable)
           .set({ next_run_at: nextRunAt ?? null, time_updated: now })
@@ -1504,21 +1515,21 @@ export const layer = Layer.effect(
     })
 
     return Service.of({
-      init,
-      list,
-      get: selectAutomation,
-      create,
-      update,
-      remove,
-      duplicate,
-      runNow,
-      listRuns,
-      getRun,
-      listFindings,
-      diff,
-      markRunRead,
-      archiveRun,
-      cancelRun,
+      init: () => provideDatabase(init()),
+      list: () => provideDatabase(list()),
+      get: (id) => provideDatabase(selectAutomation(id)),
+      create: (input) => provideDatabase(create(input)),
+      update: (id, input) => provideDatabase(update(id, input)),
+      remove: (id) => provideDatabase(remove(id)),
+      duplicate: (id) => provideDatabase(duplicate(id)),
+      runNow: (id) => provideDatabase(runNow(id)),
+      listRuns: (input) => provideDatabase(listRuns(input)),
+      getRun: (id) => provideDatabase(getRun(id)),
+      listFindings: (runID) => provideDatabase(listFindings(runID)),
+      diff: (runID) => provideDatabase(diff(runID)),
+      markRunRead: (runID, read) => provideDatabase(markRunRead(runID, read)),
+      archiveRun: (runID, archived) => provideDatabase(archiveRun(runID, archived)),
+      cancelRun: (runID) => provideDatabase(cancelRun(runID)),
     })
   }),
 )
@@ -1531,6 +1542,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(SessionSummary.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Worktree.appLayer),
+    Layer.provide(Database.defaultLayer),
   ),
 )
 
