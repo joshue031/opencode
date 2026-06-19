@@ -217,7 +217,7 @@ const main = Effect.gen(function* () {
 
   preferAppEnv(app.getPath("userData"))
 
-  const serverReady = Deferred.makeUnsafe<ServerReadyData>()
+  const serverReady = Deferred.makeUnsafe<ServerReadyData, unknown>()
   const loadingComplete = Deferred.makeUnsafe<void>()
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
@@ -402,7 +402,7 @@ const main = Effect.gen(function* () {
 
 Effect.runFork(main)
 
-async function confirmQuitWithRunningAutomations(serverReady: Deferred.Deferred<ServerReadyData>) {
+async function confirmQuitWithRunningAutomations(serverReady: Deferred.Deferred<ServerReadyData, unknown>) {
   if (quitPromptOpen) return
   quitPromptOpen = true
   try {
@@ -453,7 +453,7 @@ async function showQuitAutomationDialog(options: MessageBoxOptions) {
 }
 
 async function listRunningAutomationRuns(
-  serverReady: Deferred.Deferred<ServerReadyData>,
+  serverReady: Deferred.Deferred<ServerReadyData, unknown>,
 ): Promise<RunningAutomationRun[]> {
   if (!server) return []
   const ready = await Promise.race([
